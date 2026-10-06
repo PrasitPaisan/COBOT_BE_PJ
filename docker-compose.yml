@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mcprotocol
+      POSTGRES_PASSWORD: mcprotocol
+      POSTGRES_DB: mcprotocol
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://mcprotocol:mcprotocol@postgres:5432/mcprotocol
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data:

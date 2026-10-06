@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \".\\\\env\\\\Scripts\\\\python.exe\" -c \"from app.api.router import api_router; print\\('OK'\\); [print\\(r.path, r.methods\\) for r in api_router.routes]\")",
+      "PowerShell(& \".\\\\env\\\\Scripts\\\\python.exe\" -c \"from app.main import app; [print\\(r.path, sorted\\(r.methods\\)\\) for r in app.routes if hasattr\\(r, 'path'\\)]\")"
+    ]
+  }
+}
