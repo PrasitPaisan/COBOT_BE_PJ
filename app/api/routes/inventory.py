@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -35,6 +37,34 @@ def get_inventory_all():
             ]
     except Exception as e:
         return {"message": f"{e}"}
+
+
+@router.post("/sync-inventory")
+def sync_inventory_from_plc(db: Session = Depends(get_db)):
+    """Reconciles Tray.quantity/status in the DB against the PLC's live values.
+
+    Use this whenever the DB cache has drifted from the machine (e.g. after
+    the dispense-time decrement was missing, or after a manual restock done
+    straight on the machine's panel).
+    """
+    try:
+        with get_read_connection() as mc:
+            reads = [_read_tray(mc, tray) for tray in range(settings.MIN_TRAY_NO, settings.MAX_TRAY_NO + 1)]
+    except Exception as e:
+        return {"message": f"{e}"}
+
+    now = datetime.now(timezone.utc)
+    synced = []
+    for read in reads:
+        tray = db.get(Tray, read["tray_no"]) or Tray(tray_no=read["tray_no"])
+        tray.quantity = read["quantity"]
+        tray.status = read["tray_status"]
+        tray.last_synced_at = now
+        db.add(tray)
+        synced.append({"tray_no": read["tray_no"], "quantity": read["quantity"], "tray_status": read["tray_status"]})
+    db.commit()
+
+    return {"message": f"Synced {len(synced)} trays from PLC", "trays": synced}
 
 
 @router.get("/get-inventory-db")

@@ -13,6 +13,7 @@ from app.models.dispense_log import DispenseLog
 from app.models.medicine import Medicine
 from app.models.prescription import Prescription
 from app.models.prescription_detail import PrescriptionDetail
+from app.models.tray import Tray
 from app.plc.client import get_read_connection, get_write_connection
 from app.plc.devices import LOAD_TRAY_TO_COBOT
 from app.schemas.cobot import COBOTTask
@@ -41,12 +42,24 @@ def _wait_until_ready() -> bool:
     for TASK_READY_DEBOUNCE_READS consecutive polls before we trust it -- a single
     read of READY==1 was found to sometimes fire while the cobot was still settling
     from the previous item, causing the next item's START pulse to be missed.
+
+    A transient connection error on a poll (e.g. the PLC's limited connection slots
+    getting contended) must not be treated as a dispensing failure -- the dispense
+    itself already happened before this function was called. Such errors are logged
+    and treated as "not ready yet" so polling keeps retrying until the deadline.
     """
     deadline = time.monotonic() + settings.TASK_TIMEOUT_SECONDS
     consecutive_ready = 0
     while time.monotonic() < deadline:
-        ready = _is_ready()
-        running = _is_running()
+        try:
+            ready = _is_ready()
+            running = _is_running()
+        except Exception:
+            logger.warning("Transient error polling cobot idle state; retrying", exc_info=True)
+            consecutive_ready = 0
+            time.sleep(settings.TASK_POLL_SECONDS)
+            continue
+
         logger.info("Waiting for cobot idle: ready=%s running=%s (streak=%d)", ready, running, consecutive_ready)
 
         if ready and not running:
@@ -148,6 +161,11 @@ def _process_prescription(prescription_id: int, task: PrescriptionTask) -> None:
                 if detail.message.startswith("Successfully dispensed"):
                     detail.status = "dispensed"
                     detail.dispensed_at = datetime.now(timezone.utc)
+
+                    tray = db.get(Tray, medicine.tray_no)
+                    if tray is not None and tray.quantity is not None:
+                        tray.quantity = max(0, tray.quantity - item.MedNumber)
+                        tray.last_synced_at = datetime.now(timezone.utc)
                 elif detail.message.startswith("Dispensing timed out"):
                     detail.status = "timeout"
                 else:
